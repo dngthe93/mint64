@@ -7,7 +7,7 @@ SECTION .text
 jmp 0x07c0:START
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-TOTALSECTORCOUNT:	dw 1025
+TOTALSECTORCOUNT:	dw 1024
 
 SECTORNUMBER:		db 0x02
 HEADNUMBER:			db 0x00
