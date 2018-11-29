@@ -9,6 +9,24 @@ mov ax, 0x1000
 mov ds, ax
 mov es, ax
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Enable A20 Gate
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Bios Service
+mov ax, 0x2401
+int 0x15
+jc .A20GATEERROR
+jmp .A20GATESUCCESS
+
+; System Control Port
+.A20GATEERROR:
+in al, 0x92
+or al, 0x02
+and al, 0xfe
+out 0x92, al
+
+.A20GATESUCCESS:
 cli
 
 lgdt [GDTR]
