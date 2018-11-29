@@ -51,13 +51,8 @@ call PRINTMESSAGE
 add esp, 0xc
 
 
-push (SWITCHSUCCESSMSG - $$ + 0x10000)
-push 3
-push 0
-call PRINTMESSAGE
-add esp, 0xc
+jmp dword 0x08:0x10200
 
-jmp $
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; PRINTMESSAGE
