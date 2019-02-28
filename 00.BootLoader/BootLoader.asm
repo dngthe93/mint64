@@ -8,6 +8,7 @@ jmp 0x07c0:START
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 TOTALSECTORCOUNT:	dw 1024
+KERNEL32SECTORCOUNT: dw 2048
 
 SECTORNUMBER:		db 0x02
 HEADNUMBER:			db 0x00
