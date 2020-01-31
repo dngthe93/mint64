@@ -3,6 +3,7 @@
 #include "Keyboard.h"
 #include "Descriptor.h"
 #include "AssemblyUtility.h"
+#include "PIC.h"
 
 
 void kPrintString(int iX, int iY, const char *pcString);
@@ -50,6 +51,14 @@ void Main()
 		while (1);
 	}
 
+	kPrintString(0, 16, "PIC Controller And Interrupt Initialize.....................[    ]");
+	kInitializePIC();
+	kMaskPICInterrupt(0);
+	kEnableInterrupt();
+	kPrintString(61, 16, "Pass");
+
+
+
 	while (1)
 	{
 		if (kIsOutputBufferFull())
@@ -62,7 +71,7 @@ void Main()
 				//if (bFlags & KEY_FLAGS_DOWN)
 				if (bFlags & KEY_FLAGS_DOWN && !(vcTemp[0] & 0x80))
 				{
-					kPrintString(i++, 16, vcTemp);
+					kPrintString(i++, 17, vcTemp);
 
 					if (vcTemp[0] == '0')
 						bTemp = bTemp / 0;
