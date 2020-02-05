@@ -1,9 +1,15 @@
 #include "Types.h"
 #include "AssemblyUtility.h"
 #include "Keyboard.h"
+#include "Queue.h"
+#include "Utility.h"
 
 
 static KEYBOARDMANAGER gs_stKeyboardManager = { 0 };
+
+// A Queue to save the key states (by the interrupt handler)
+static QUEUE gs_stKeyQueue;
+static KEYDATA gs_vstKeyQueueBuffer[KEY_MAXQUEUECOUNT];
 
 static KEYMAPPINGENTRY gs_vstKeyMappingTable[KEY_MAPPINGTABLEMAXCOUNT] =
 {
@@ -119,9 +125,41 @@ BOOL kIsInputBufferFull()
 	return FALSE;
 }
 
+BOOL kWaitForACKAndPutOtherScanCode()
+{
+	int i, j;
+	BYTE bData;
+	BOOL bResult = FALSE;
+
+	for (j = 0; j < 100; j++)
+	{
+		for (i = 0; i < 0x10000; i++)
+			if (kIsOutputBufferFull())
+				break; // Output buffer is full
+
+		bData = kInPortByte(0x60);
+		if (bData == 0xFA)
+		{ // ACK
+			bResult = TRUE;
+			break;
+		}
+		else
+		{ // ~ACK
+			kConvertScanCodeAndPutQueue(bData);
+		}
+	}
+
+	return bResult;
+}
+
 BOOL kActivateKeyboard()
 {
 	int i, j;
+	BOOL bPreviousInterrupt;
+	BOOL bResult;
+
+	// Disable Interrupt
+	bPreviousInterrupt = kSetInterruptFlag(FALSE);
 
 	// Activate Keyboard Device
 	kOutPortByte(0x64, 0xAE);
@@ -134,18 +172,12 @@ BOOL kActivateKeyboard()
 	// Activate Keyboard
 	kOutPortByte(0x60, 0xF4);
 
+	// Wait for the ACK msg
+	bResult = kWaitForACKAndPutOtherScanCode();
 
-	// 100 is enough to find the ACK msg
-	for (j = 0; j < 100; j++)
-	{
-		for (i = 0; i < 0x10000; i++)
-			if (kIsOutputBufferFull())
-				break; // Output buffer is full
-
-		// 0xFA: ACK
-		if (kInPortByte(0x60) == 0xFA)
-			return TRUE;
-	}
+	// Restore Interrupt State
+	kSetInterruptFlag(bPreviousInterrupt);
+	return bResult;
 }
 
 BYTE kGetKeyboardScanCode()
@@ -202,6 +234,12 @@ void kReboot()
 BOOL kChangeKeyboardLED(BOOL bCapsLockOn, BOOL bNumLockOn, BOOL bScrollLockOn)
 {
 	int i, j;
+	BOOL bPreviousInterrupt;
+	BOOL bResult;
+	BYTE bData;
+
+	// Disable Interrupt
+	bPreviousInterrupt = kSetInterruptFlag(FALSE);
 
 	for (i = 0; i < 0x10000; i++)
 		if (!kIsInputBufferFull())
@@ -213,41 +251,26 @@ BOOL kChangeKeyboardLED(BOOL bCapsLockOn, BOOL bNumLockOn, BOOL bScrollLockOn)
 		if (!kIsInputBufferFull())
 			break; // Keyboard takes the command
 
-	for (j = 0; j < 100; j++)
+	// Wait for the ACK msg
+	bResult = kWaitForACKAndPutOtherScanCode();
+
+	if (!bResult)
 	{
-		for (i = 0; i < 0x10000; i++)
-			if (kIsOutputBufferFull())
-				break; // Output buffer is full
-
-		// 0xFA: ACK
-		if (kInPortByte(0x60) == 0xFA)
-			break;
-	}
-
-	if (j >= 100)
+		kSetInterruptFlag(bPreviousInterrupt);
 		return FALSE;
-
+	}
 
 	kOutPortByte(0x60, (bCapsLockOn << 2) | (bNumLockOn << 1) | bScrollLockOn);
 	for (i = 0; i < 0x10000; i++)
 		if (!kIsInputBufferFull())
 			break; // Keyboard takes the command
 
-	for (j = 0; j < 100; j++)
-	{
-		for (i = 0; i < 0x10000; i++)
-			if (kIsOutputBufferFull())
-				break; // Output buffer is full
+	// Wait for the ACK msg
+	bResult = kWaitForACKAndPutOtherScanCode();
 
-		// 0xFA: ACK
-		if (kInPortByte(0x60) == 0xFA)
-			break;
-	}
-
-	if (j >= 100)
-		return FALSE;
-
-	return TRUE;
+	// Restore Interrupt State
+	kSetInterruptFlag(bPreviousInterrupt);
+	return bResult;
 }
 
 BOOL kIsUseCombinedCode(BYTE bScanCode)
@@ -369,4 +392,54 @@ BOOL kConvertScanCodeToASCIICode(BYTE bScanCode, BYTE *pbASCIICode, BOOL *pbFlag
 
 	UpdateCombinationKeyStatusAndLED(bScanCode);
 	return TRUE;
+}
+
+BOOL kInitializeKeyboard()
+{
+	// Initialize Quue
+	kInitializeQueue(&gs_stKeyQueue, gs_vstKeyQueueBuffer, KEY_MAXQUEUECOUNT, sizeof(KEYDATA));
+
+	// Activate Keyboard
+	return kActivateKeyboard();
+}
+
+BOOL kConvertScanCodeAndPutQueue(BYTE bScanCode)
+{
+	KEYDATA stData;
+	BOOL bResult = FALSE;
+	BOOL bPreviousInterrupt;
+
+	stData.bScanCode = bScanCode;
+
+	if (kConvertScanCodeToASCIICode(bScanCode, &(stData.bASCIICode), &(stData.bFlags)))
+	{
+		// Disable Interrupt
+		bPreviousInterrupt = kSetInterruptFlag(FALSE);
+
+		bResult = kPutQueue(&gs_stKeyQueue, &stData);
+
+		// Restore Interrupt Status
+		kSetInterruptFlag(bPreviousInterrupt);
+	}
+
+	return bResult;
+}
+
+BOOL kGetKeyFromKeyQueue(KEYDATA *pstData)
+{
+	BOOL bResult;
+	BOOL bPreviousInterrupt;
+
+	if (kIsQueueEmpty(&gs_stKeyQueue)) // Is this really necessary?
+		return FALSE;
+
+	// Disable Interrupt
+	bPreviousInterrupt = kSetInterruptFlag(FALSE);
+
+	bResult = kGetQueue(&gs_stKeyQueue, pstData);
+
+	// Restore Interrupt Status
+	kSetInterruptFlag(bPreviousInterrupt);
+
+	return bResult;
 }

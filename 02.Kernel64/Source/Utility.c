@@ -1,5 +1,6 @@
 
 #include "Utility.h"
+#include "AssemblyUtility.h"
 
 void kMemSet(void *pvDst, BYTE bData, unsigned int iSize)
 {
@@ -30,4 +31,19 @@ int kMemCmp(const void *pvDst, const void *pvSrc, unsigned int iSize)
 	}
 
 	return 0;
+}
+
+BOOL kSetInterruptFlag(BOOL bEnableInterrupt)
+{
+	QWORD qwRFLAGS;
+
+	qwRFLAGS = kReadRFLAGS();
+
+	if (bEnableInterrupt)
+		kEnableInterrupt();
+	else
+		kDisableInterrupt();
+
+	// IF bit (bit 9)
+	return !!(qwRFLAGS & 0x0200);
 }

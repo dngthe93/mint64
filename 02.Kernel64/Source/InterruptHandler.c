@@ -1,6 +1,7 @@
 
 #include "InterruptHandler.h"
 #include "PIC.h"
+#include "Keyboard.h"
 
 void kPrintString(int iX, int iY, const char *pcString);
 
@@ -44,7 +45,7 @@ void kKeyboardHandler(int iVectorNumber)
 	char vcBuffer[] = "[INT:  , ]";
 	static int g_iKeyboardInterruptCount = 0;
 
-
+	// Print msgs to indicate that the interrupt has been generated
 	vcBuffer[5] = '0' + iVectorNumber / 10;
 	vcBuffer[6] = '0' + iVectorNumber % 10;
 
@@ -52,6 +53,12 @@ void kKeyboardHandler(int iVectorNumber)
 	g_iKeyboardInterruptCount = (g_iKeyboardInterruptCount + 1) % 10;
 	kPrintString(0, 0, vcBuffer);
 
+	// Get keyboard keys from I/O port and put it to the queue
+	if (kIsOutputBufferFull())
+	{
+		BYTE bTemp = kGetKeyboardScanCode();
+		kConvertScanCodeAndPutQueue(bTemp);
+	}
 
 	kSendEOIToPIC(iVectorNumber - PIC_IRQSTARTVECTOR);
 }
