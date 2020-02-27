@@ -1,5 +1,6 @@
 
 #include "Queue.h"
+#include "Utility.h"
 
 
 void kInitializeQueue(QUEUE *pstQueue, void *pvQueueBuffer, int iMaxDataCount, int iDataSize)
