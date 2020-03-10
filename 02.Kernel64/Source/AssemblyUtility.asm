@@ -4,6 +4,7 @@ SECTION .text
 
 global kInPortByte, kOutPortByte, kLoadGDTR, kLoadTR, kLoadIDTR
 global kEnableInterrupt, kDisableInterrupt, kReadRFLAGS
+global kReadTSC
 
 
 
@@ -84,4 +85,19 @@ ret
 kReadRFLAGS:
 pushfq
 pop rax
+ret
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; kReadTSC() - cdecl
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+kReadTSC:
+push rdx
+
+rdtsc
+
+shl rdx, 32
+or rax, rdx
+
+pop rdx
 ret
