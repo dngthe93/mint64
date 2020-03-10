@@ -81,7 +81,7 @@ void kSetIDTEntry(IDTENTRY *pstEntry, void *pvHandler, WORD wSelector, BYTE bIST
 	pstEntry->wSegmentSelector = wSelector;
 
 	// Set IST
-	pstEntry->bTypeAndFlags = bIST & 0x3;
+	pstEntry->bIST = bIST & 0x3;
 
 	// Set Type and Flags
 	pstEntry->bTypeAndFlags = (bType & 0x0F) | (bFlags & 0xF0);

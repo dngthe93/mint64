@@ -124,7 +124,7 @@ typedef struct kGDTEntry16Struct
 
 	BYTE bTypeAndLowerFlag;
 
-	BYTE bUpperLimitAndJpperFlag;
+	BYTE bUpperLimitAndUpperFlag;
 	BYTE bMiddleBaseAddress2;
 	DWORD dwUpperBaseAddress;
 	DWORD dwReserved;
