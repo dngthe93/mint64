@@ -3,6 +3,8 @@
 #include "AssemblyUtility.h"
 #include <stdarg.h>
 
+volatile QWORD g_qwTickCount = 0;
+
 void kMemSet(void *pvDst, BYTE bData, unsigned int iSize)
 {
 	unsigned int i;
@@ -321,4 +323,9 @@ int kVSPrintf(char *pcBuffer, const char *pcFormatString, va_list ap)
 
 	pcBuffer[iBufferIndex] = '\0';
 	return iBufferIndex;
+}
+
+QWORD kGetTickCount()
+{
+	return g_qwTickCount;
 }

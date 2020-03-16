@@ -7,6 +7,7 @@
 #include "Console.h"
 #include "ConsoleShell.h"
 #include "Utility.h"
+#include "PIT.h"
 
 
 void Main()
@@ -46,8 +47,12 @@ void Main()
 	kSetCursor(61, iCursorY++);
 	kPrintf("Pass], Size= %d MB\n", kGetTotalRAMSize());
 
-	kPrintf("Keyboard Activate And Queue Initialize......................[    ]");
+	kPrintf("TCB Pool And Scheduler Initialize...........................[Pass]\n");
+	iCursorY++;
+	kInitializeScheduler();
+	kInitializePIT(MSTOCOUNT(1), 1);
 
+	kPrintf("Keyboard Activate And Queue Initialize......................[    ]");
 	if (kInitializeKeyboard())
 	{
 		kSetCursor(61, iCursorY++);
