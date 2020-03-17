@@ -52,6 +52,24 @@
 // Maximum time available for a single task in ms
 #define TASK_PROCESSORTIME		5
 
+// Maximum number of lists
+#define TASK_MAXREADYLISTCOUNT	5
+
+// Priority val of the tasks
+#define TASK_FLAGS_HIGHEST		0
+#define TASK_FLAGS_HIGH			1
+#define TASK_FLAGS_MEDIUM		2
+#define TASK_FLAGS_LOW			3
+#define TASK_FLAGS_LOWEST		4
+#define TASK_FLAGS_WAIT			0xFF
+
+#define TASK_FLAGS_ENDTASK		0x8000000000000000
+#define TASK_FLAGS_IDLE			0x0800000000000000
+
+#define GETPRIORITY(x)			((x) & 0xFF)
+#define SETPRIORITY(x, prior)	((x) = ((x) & 0xFFFFFFFFFFFFFF00) | (prior))
+#define GETTCBOFFSET(x)			((x) & 0xFFFFFFFF)
+
 
 #pragma pack(push, 1)
 typedef struct kContextStruct
@@ -90,7 +108,16 @@ typedef struct kSchedulerStruct
 	int iProcessorTime;
 
 	// List of all runnable tasks
-	LIST stReadyList;
+	LIST vstReadyList[TASK_MAXREADYLISTCOUNT];
+	// List of all gonna-exit tasks
+	LIST stWaitList;
+
+	// Record the task-execution-count of all runnable lists
+	int viExecuteCount[TASK_MAXREADYLISTCOUNT];
+
+	// Vars to calculate CPU load
+	QWORD qwProcessorLoad;
+	QWORD qwSpendProcessorTimeInIdleTask;
 } SCHEDULER;
 #pragma pop
 
@@ -111,10 +138,25 @@ void kInitializeScheduler();
 void kSetRunningTask(TCB *pstTask);
 TCB* kGetRunningTask();
 TCB *kGetNExtTaskToRun();
-void kAddTaskToReadyList(TCB *pstTask);
+BOOL kAddTaskToReadyList(TCB *pstTask);
+TCB* kRemoveTaskFromReadyList(QWORD qwTaskID);
+BOOL kChangePriority(QWORD qwTaskID, BYTE bPriority);
 void kSchedule();
 BOOL kScheduleInInterrupt();
 void kDecreaseProcessorTime();
 BOOL kIsProcessorTimeExpired();
+BOOL kEndTask(QWORD qwTaskID);
+void kExitTask();
+int kGetReadyTaskCount();
+int kGetTaskCount();
+TCB* kGetTCBInTCBPool(int iOffset);
+BOOL kIsTaskExist(QWORD qwID);
+QWORD kGetProcessorLoad();
+
+////////////////////////////////////////////////////////////////////////////////
+// Idle Tasks
+////////////////////////////////////////////////////////////////////////////////
+void kIdleTask();
+void kHaltProcessorByLoad();
 
 #endif /*__TASK_H__*/

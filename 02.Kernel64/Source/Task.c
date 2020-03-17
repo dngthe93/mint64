@@ -3,6 +3,7 @@
 #include "Descriptor.h"
 #include "Utility.h"
 #include "AssemblyUtility.h"
+#include "Console.h"
 
 
 //static SCHEDULER gs_stScheduler;
@@ -125,11 +126,22 @@ void kSetUpTask(TCB *pstTCB, QWORD qwFlags, QWORD qwEntryPointAddress, void *pvS
 
 void kInitializeScheduler()
 {
+	int i;
+
 	kInitializeTCBPool();
 
-	kInitializeList(&gs_stScheduler.stReadyList);
+	// Initialize all runnable & wait lists
+	for (i = 0; i < TASK_MAXREADYLISTCOUNT; i++)
+	{
+		kInitializeList(&(gs_stScheduler.vstReadyList[i]));
+		gs_stScheduler.viExecuteCount[i] = 0;
+	}
+	kInitializeList(&gs_stScheduler.stWaitList);
 
+	// Allocate a TCB for the current task and assign the higest priority to it
+	// Curren task is the ConsoleShell called from the Main()
 	gs_stScheduler.pstRunningTask = kAllocateTCB();
+	gs_stScheduler.pstRunningTask->qwFlags = TASK_FLAGS_HIGHEST;
 }
 
 void kSetRunningTask(TCB *pstTask)
@@ -144,15 +156,113 @@ TCB* kGetRunningTask()
 
 TCB *kGetNextTaskToRun()
 {
-	if (kGetListCount(&gs_stScheduler.stReadyList) == 0)
-		return NULL;
+	TCB *pstTarget = NULL;
+	int iTaskCount, i, j;
 
-	return (TCB*)kRemoveListFromHeader(&(gs_stScheduler.stReadyList));
+	// If all tasks of the all ready-list has executed once, the inner for-loop with var 'i'
+	//  will just end after clearing  all the execution count of the lists, without
+	//  selecting the next task.
+	// To prevent that kind of problem, we just simply add an outter for-loop with var 'j'.
+	for (j = 0; j < 2; j++)
+	{
+		for (i = 0; i < TASK_MAXREADYLISTCOUNT; i++)
+		{
+			iTaskCount = kGetListCount(&(gs_stScheduler.vstReadyList[i]));
+
+			if (gs_stScheduler.viExecuteCount[i] < iTaskCount)
+			{
+				// Pick the i-th priority list, vstReadyList[i]
+				pstTarget = (TCB*)kRemoveListFromHeader(&(gs_stScheduler.vstReadyList[i]));
+
+				// Increase the execution count of the i-th list
+				gs_stScheduler.viExecuteCount[i]++;
+				break;
+			}
+			else
+			{
+				// Go to the next (i+1)-th list,
+				//  after clear the execution count of the i-th list
+				gs_stScheduler.viExecuteCount[i] = 0;
+			}
+		}
+
+		// If we found the next task to run, then just simply break
+		if (pstTarget)
+			break;
+	}
+
+	return pstTarget;
 }
 
-void kAddTaskToReadyList(TCB *pstTask)
+BOOL kAddTaskToReadyList(TCB *pstTask)
 {
-	kAddListToTail(&gs_stScheduler.stReadyList, pstTask);
+	BYTE bPriority;
+
+	bPriority = GETPRIORITY(pstTask->qwFlags);
+	if (bPriority >= TASK_MAXREADYLISTCOUNT)
+		return FALSE; // Wrong priority value
+
+	kAddListToTail(&(gs_stScheduler.vstReadyList[bPriority]), pstTask);
+
+	return TRUE;
+}
+
+TCB* kRemoveTaskFromReadyList(QWORD qwTaskID)
+{
+	TCB *pstTarget;
+	BYTE bPriority;
+
+	if (GETTCBOFFSET(qwTaskID) >= TASK_MAXCOUNT)
+		return NULL; // Wrong task id
+
+	pstTarget = &(gs_stTCBPoolManager.pstStartAddress[GETTCBOFFSET(qwTaskID)]);
+	if (pstTarget->stLink.qwID != qwTaskID)
+		return NULL; // Wrong task id
+
+	bPriority = GETPRIORITY(pstTarget->qwFlags);
+	pstTarget = kRemoveList(&(gs_stScheduler.vstReadyList[bPriority]), qwTaskID);
+	return pstTarget;
+}
+
+BOOL kChangePriority(QWORD qwTaskID, BYTE bPriority)
+{
+	TCB *pstTarget;
+
+	if (bPriority > TASK_MAXREADYLISTCOUNT)
+		return FALSE; // Wrong priority value
+
+	pstTarget = gs_stScheduler.pstRunningTask;
+	if (pstTarget->stLink.qwID == qwTaskID)
+	{ // if qwTaskID is the ID of the current-running task
+
+		// Just change the priority and wait.
+		// After it uses all of the timeslice of itself,
+		//  the scheduler will add it to the appropriate priority-run-list
+		SETPRIORITY(pstTarget->qwFlags, bPriority);
+	}
+	else
+	{
+		pstTarget = kRemoveTaskFromReadyList(qwTaskID);
+		if (pstTarget == NULL)
+		{
+			// if the target does not exist in the run-lists,
+			//  find it on the TCB Pool and set the priority directly
+			pstTarget = kGetTCBInTCBPool(GETTCBOFFSET(qwTaskID));
+			// FIXME: pstTarget->stLink.qwID != qwTaskID case can be occured,
+			//			because GETTCBOFFSET(x) does not check 'x', the input param value
+			if (pstTarget != NULL)
+				SETPRIORITY(pstTarget->qwFlags, bPriority);
+		}
+		else
+		{ // Found the target in the run-lists
+
+			// Set the priority and add the task to the run-lists
+			SETPRIORITY(pstTarget->qwFlags, bPriority);
+			kAddTaskToReadyList(pstTarget);
+		}
+	}
+
+	return TRUE;
 }
 
 void kSchedule()
@@ -161,7 +271,7 @@ void kSchedule()
 	BOOL bPreviousFlag;
 
 	// If there is no other runnable task -> just return
-	if (kGetListCount(&gs_stScheduler.stReadyList) == 0)
+	if (kGetReadyTaskCount() < 1)
 		return;
 
 	// bPreviousFlag is the IF flag of the pstRunningTask
@@ -175,16 +285,35 @@ void kSchedule()
 		return;
 	}
 
-	// Add the running task to the runnable task list
+	// Change the running task(in gs_stScheduler) as a NextTask
 	pstRunningTask = gs_stScheduler.pstRunningTask;
-	kAddTaskToReadyList(pstRunningTask);
+	gs_stScheduler.pstRunningTask = pstNextTask;
+
+	if ((pstRunningTask->qwFlags & TASK_FLAGS_IDLE) == TASK_FLAGS_IDLE)
+	{ // If the running task is an IDLE task
+
+		// Increase the TimeInIdleTask variable to calculate CPU load
+		gs_stScheduler.qwSpendProcessorTimeInIdleTask +=
+			TASK_PROCESSORTIME - gs_stScheduler.iProcessorTime;
+	}
 
 	// Update the processor time for the new task
 	gs_stScheduler.iProcessorTime = TASK_PROCESSORTIME;
 
-	// Set the next task as a running task and do context-switching
-	gs_stScheduler.pstRunningTask = pstNextTask;
-	kSwitchContext(&pstRunningTask->stContext, &pstNextTask->stContext);
+	if (pstRunningTask->qwFlags & TASK_FLAGS_ENDTASK)
+	{ // If the running task is marked as a ENDTASK
+
+		// Put it to the wait-list and context switch, w/o saving the current context
+		kAddListToTail(&gs_stScheduler.stWaitList, pstRunningTask);
+		kSwitchContext(NULL, &(pstNextTask->stContext));
+	}
+	else
+	{
+		// Add the running task to the runnable task list and do context-switching
+		kAddTaskToReadyList(pstRunningTask);
+		kSwitchContext(&pstRunningTask->stContext, &pstNextTask->stContext);
+	}
+
 
 	// Restore the previously saved interrupt flag
 	// bPreviousFlag is the IF flag of the pstNextTask
@@ -202,14 +331,31 @@ BOOL kScheduleInInterrupt()
 
 	pcContextAddress = (char*)IST_STARTADDRESS + IST_SIZE - sizeof(CONTEXT);
 
-	// Save currently running tasks' context from IST and add it to the run-list
 	pstRunningTask = gs_stScheduler.pstRunningTask;
-	kMemCpy(&pstRunningTask->stContext, pcContextAddress, sizeof(CONTEXT));
-	kAddTaskToReadyList(pstRunningTask);
-
-	// Set NextTask as a running task
-	// Change the saved context in the IST to the NextTask's context
 	gs_stScheduler.pstRunningTask = pstNextTask;
+
+	if ((pstRunningTask->qwFlags & TASK_FLAGS_IDLE) == TASK_FLAGS_IDLE)
+	{ // If the running task is an IDLE task
+
+		// Increase the TimeInIdleTask variable to calculate CPU load
+		gs_stScheduler.qwSpendProcessorTimeInIdleTask += TASK_PROCESSORTIME;
+	}
+
+
+	if (pstRunningTask->qwFlags & TASK_FLAGS_ENDTASK)
+	{ // If the running task is marked as a ENDTASK
+
+		// Put it to the wait-list
+		kAddListToTail(&gs_stScheduler.stWaitList, pstRunningTask);
+	}
+	else
+	{
+		// Save currently running tasks' context from IST and add it to the run-list
+		kMemCpy(&pstRunningTask->stContext, pcContextAddress, sizeof(CONTEXT));
+		kAddTaskToReadyList(pstRunningTask);
+	}
+
+	// Change the saved context in the IST, to the NextTask's context
 	kMemCpy(pcContextAddress, &pstNextTask->stContext, sizeof(CONTEXT));
 
 	// Update the processor time for the new task
@@ -226,4 +372,190 @@ void kDecreaseProcessorTime()
 BOOL kIsProcessorTimeExpired()
 {
 	return (gs_stScheduler.iProcessorTime <= 0);
+}
+
+BOOL kEndTask(QWORD qwTaskID)
+{
+	TCB *pstTarget;
+	BYTE bPriority;
+
+	pstTarget = gs_stScheduler.pstRunningTask;
+	if (pstTarget->stLink.qwID == qwTaskID)
+	{ // If qwTaskID is running task
+
+		// Set the MSB of the qwFlags (TASK_FLAGS_ENDTASK)
+		pstTarget->qwFlags |= TASK_FLAGS_ENDTASK;
+
+		// Set the priority to 0xFF (TASK_FLAGS_WAIT)
+		SETPRIORITY(pstTarget->qwFlags, TASK_FLAGS_WAIT);
+
+		// kSchedule() function will put the current task
+		//  to the wait-list (by checking the qwFlags value)
+		kSchedule();
+
+		// This while-loop below SHOULD NEVER BE EXECUTED
+		//  cause the current task has ended & switched
+		kPrintf("\n\n***** OOPS!! Something's worng!\n");
+		kPrintf("***** It can be happen when all the tasks have been killed");
+		while (1);
+	}
+	else
+	{
+		// If qwTaskID is not a running-task.
+		// It means that, current running task is trying to end the
+		//  other task, which has the 'qwTaskID' as it's identifier
+
+		pstTarget = kRemoveTaskFromReadyList(qwTaskID);
+		if (pstTarget == NULL)
+		{ // qwTaskID does not exists in the ready lists
+
+			pstTarget = kGetTCBInTCBPool(GETTCBOFFSET(qwTaskID));
+			if (pstTarget != NULL)
+			{
+				// FIXME: pstTarget->stLink.qwID != qwTaskID case can be occured,
+				//			because GETTCBOFFSET(x) does not check 'x', the input param value
+
+				pstTarget->qwFlags |= TASK_FLAGS_ENDTASK;
+				SETPRIORITY(pstTarget->qwFlags, TASK_FLAGS_WAIT);
+			}
+			return FALSE;
+		}
+
+		// If qwTaskID exists in the ready list, then set the flag to
+		//  end-state-value, and add the task to the tail of the wait-list
+		pstTarget->qwFlags |= TASK_FLAGS_ENDTASK;
+		SETPRIORITY(pstTarget->qwFlags, TASK_FLAGS_WAIT);
+		kAddListToTail(&(gs_stScheduler.stWaitList), pstTarget);
+	}
+
+	return TRUE;
+}
+
+void kExitTask()
+{
+	// End the current task
+	kEndTask(gs_stScheduler.pstRunningTask->stLink.qwID);
+}
+
+int kGetReadyTaskCount()
+{
+	int iTotalCount = 0;
+	int i;
+
+	for (i = 0; i < TASK_MAXREADYLISTCOUNT; i++)
+		iTotalCount += kGetListCount(&(gs_stScheduler.vstReadyList[i]));
+
+	return iTotalCount;
+}
+
+int kGetTaskCount()
+{
+	int iTotalCount;
+
+	// Ready task + Wait task + Running task
+	iTotalCount = kGetReadyTaskCount();
+	iTotalCount += kGetListCount(&gs_stScheduler.stWaitList) + 1;
+
+	return iTotalCount;
+}
+
+TCB* kGetTCBInTCBPool(int iOffset)
+{
+	if (0 <= iOffset && iOffset < TASK_MAXCOUNT)
+		return &( gs_stTCBPoolManager.pstStartAddress[iOffset]);
+
+	return NULL;
+}
+
+BOOL kIsTaskExist(QWORD qwID)
+{
+	TCB *pstTCB;
+
+	pstTCB = kGetTCBInTCBPool(GETTCBOFFSET(qwID));
+
+	return (pstTCB && pstTCB->stLink.qwID == qwID);
+}
+
+QWORD kGetProcessorLoad()
+{
+	return gs_stScheduler.qwProcessorLoad;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+// Idle Tasks
+////////////////////////////////////////////////////////////////////////////////
+
+void kIdleTask()
+{
+	TCB *pstTask;
+	QWORD qwLastMeasureTickCount, qwLastSpendTickInIdleTask;
+	QWORD qwCurrentMeasureTickCount, qwCurrentSpendTickInIdleTask;
+
+	qwLastMeasureTickCount = kGetTickCount();
+	qwLastSpendTickInIdleTask = gs_stScheduler.qwSpendProcessorTimeInIdleTask;
+
+	while (1)
+	{
+		qwCurrentMeasureTickCount = kGetTickCount();
+		qwCurrentSpendTickInIdleTask = gs_stScheduler.qwSpendProcessorTimeInIdleTask;
+
+		#define qwDiffOfMeasureTickCount (qwCurrentMeasureTickCount - qwLastMeasureTickCount)
+		#define qwDiffOfSpendTickInIdleTask (qwCurrentSpendTickInIdleTask - qwLastSpendTickInIdleTask)
+		if (qwDiffOfMeasureTickCount == 0)
+		{
+			// To avoid the Divide-by-Zero exception
+			gs_stScheduler.qwProcessorLoad = 0;
+		}
+		else
+		{
+			gs_stScheduler.qwProcessorLoad = 100 - (qwDiffOfSpendTickInIdleTask / qwDiffOfMeasureTickCount) * 100;
+		}
+		#undef qwDiffOfMeasureTickCount
+		#undef qwDiffOfSpendTickInIdleTask
+
+		// Save the current count value
+		qwLastMeasureTickCount = qwCurrentMeasureTickCount;
+		qwLastSpendTickInIdleTask = qwCurrentSpendTickInIdleTask;
+
+
+		// Halt according to the processor load
+		kHaltProcessorByLoad();
+
+
+		// Delete all the tasks in the wait list and free the allocated TCB
+		if (kGetListCount(&gs_stScheduler.stWaitList) >= 0)
+		{
+			while (1)
+			{
+				pstTask = kRemoveListFromHeader(&gs_stScheduler.stWaitList);
+				if (pstTask == NULL)
+					break;
+
+				kPrintf("IDLE: Task ID[0x%q] is completely ended.\n", pstTask->stLink.qwID);
+				kFreeTCB(pstTask->stLink.qwID);
+			}
+		}
+
+		kSchedule();
+	}
+}
+
+void kHaltProcessorByLoad()
+{
+	if (gs_stScheduler.qwProcessorLoad < 40)
+	{
+		kHlt();
+		kHlt();
+		kHlt();
+	}
+	else if (gs_stScheduler.qwProcessorLoad < 80)
+	{
+		kHlt();
+		kHlt();
+	}
+	else if (gs_stScheduler.qwProcessorLoad < 95)
+	{
+		kHlt();
+	}
 }

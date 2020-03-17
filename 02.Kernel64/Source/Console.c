@@ -4,6 +4,7 @@
 #include "Keyboard.h"
 #include "Utility.h"
 #include "AssemblyUtility.h"
+#include "Task.h"
 
 
 CONSOLEMANAGER gs_stConsoleManager = { 0 };
@@ -126,7 +127,8 @@ BYTE kGetCh()
 
 	while (1)
 	{
-		while (kGetKeyFromKeyQueue(&stData) == FALSE);
+		while (kGetKeyFromKeyQueue(&stData) == FALSE)
+			kSchedule();
 
 		if (stData.bFlags & KEY_FLAGS_DOWN)
 			return stData.bASCIICode;
