@@ -125,11 +125,11 @@ typedef struct kSchedulerStruct
 ////////////////////////////////////////////////////////////////////////////////
 // Task Pool & Task
 ////////////////////////////////////////////////////////////////////////////////
-void kInitializeTCBPool();
-TCB* kAllocateTCB();
-void kFreeTCB(QWORD qwID);
+static void kInitializeTCBPool();
+static TCB* kAllocateTCB();
+static void kFreeTCB(QWORD qwID);
 TCB* kCreateTask(QWORD qwFlags, QWORD qwEntryPointAddress);
-void kSetUpTask(TCB *pstTCB, QWORD qwFlags, QWORD qwEntryPointAddress, void *pvStackAddress, QWORD qwStackSize);
+static void kSetUpTask(TCB *pstTCB, QWORD qwFlags, QWORD qwEntryPointAddress, void *pvStackAddress, QWORD qwStackSize);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Scheduler
@@ -137,9 +137,9 @@ void kSetUpTask(TCB *pstTCB, QWORD qwFlags, QWORD qwEntryPointAddress, void *pvS
 void kInitializeScheduler();
 void kSetRunningTask(TCB *pstTask);
 TCB* kGetRunningTask();
-TCB *kGetNExtTaskToRun();
-BOOL kAddTaskToReadyList(TCB *pstTask);
-TCB* kRemoveTaskFromReadyList(QWORD qwTaskID);
+static TCB *kGetNextTaskToRun();
+static BOOL kAddTaskToReadyList(TCB *pstTask);
+static TCB* kRemoveTaskFromReadyList(QWORD qwTaskID);
 BOOL kChangePriority(QWORD qwTaskID, BYTE bPriority);
 void kSchedule();
 BOOL kScheduleInInterrupt();

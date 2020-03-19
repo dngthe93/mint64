@@ -3,6 +3,7 @@
 #include "Keyboard.h"
 #include "Queue.h"
 #include "Utility.h"
+#include "Synchronization.h"
 
 
 static KEYBOARDMANAGER gs_stKeyboardManager = { 0 };
@@ -413,13 +414,13 @@ BOOL kConvertScanCodeAndPutQueue(BYTE bScanCode)
 
 	if (kConvertScanCodeToASCIICode(bScanCode, &(stData.bASCIICode), &(stData.bFlags)))
 	{
-		// Disable Interrupt
-		bPreviousInterrupt = kSetInterruptFlag(FALSE);
+		bPreviousInterrupt = kLockForSystemData();
+		{ // C.S.
 
-		bResult = kPutQueue(&gs_stKeyQueue, &stData);
+			bResult = kPutQueue(&gs_stKeyQueue, &stData);
 
-		// Restore Interrupt Status
-		kSetInterruptFlag(bPreviousInterrupt);
+		}
+		kUnlockForSystemData(bPreviousInterrupt);
 	}
 
 	return bResult;
@@ -433,13 +434,13 @@ BOOL kGetKeyFromKeyQueue(KEYDATA *pstData)
 	if (kIsQueueEmpty(&gs_stKeyQueue)) // Is this really necessary?
 		return FALSE;
 
-	// Disable Interrupt
-	bPreviousInterrupt = kSetInterruptFlag(FALSE);
+	bPreviousInterrupt = kLockForSystemData();
+	{ // C.S.
 
-	bResult = kGetQueue(&gs_stKeyQueue, pstData);
+		bResult = kGetQueue(&gs_stKeyQueue, pstData);
 
-	// Restore Interrupt Status
-	kSetInterruptFlag(bPreviousInterrupt);
+	}
+	kUnlockForSystemData(bPreviousInterrupt);
 
 	return bResult;
 }

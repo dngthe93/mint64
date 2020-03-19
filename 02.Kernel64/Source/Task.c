@@ -4,6 +4,7 @@
 #include "Utility.h"
 #include "AssemblyUtility.h"
 #include "Console.h"
+#include "Synchronization.h"
 
 
 //static SCHEDULER gs_stScheduler;
@@ -15,7 +16,7 @@ static TCBPOOLMANAGER gs_stTCBPoolManager;
 // Task Pool & Task
 ////////////////////////////////////////////////////////////////////////////////
 
-void kInitializeTCBPool()
+static void kInitializeTCBPool()
 {
 	int i;
 
@@ -32,7 +33,7 @@ void kInitializeTCBPool()
 	gs_stTCBPoolManager.iAllocatedCount = 1;
 }
 
-TCB* kAllocateTCB()
+static TCB* kAllocateTCB()
 {
 	TCB *pstEmptyTCB;
 	int i;
@@ -60,7 +61,7 @@ TCB* kAllocateTCB()
 	return pstEmptyTCB;
 }
 
-void kFreeTCB(QWORD qwID)
+static void kFreeTCB(QWORD qwID)
 {
 	int i;
 
@@ -76,22 +77,36 @@ TCB* kCreateTask(QWORD qwFlags, QWORD qwEntryPointAddress)
 {
 	TCB *pstTask;
 	void *pvStackAddress;
+	BOOL bPreviousFlag;
 
-	pstTask = kAllocateTCB();
-	if (pstTask == NULL)
-		return NULL;
+	bPreviousFlag = kLockForSystemData();
+	{ // C.S.
+		pstTask = kAllocateTCB();
+		if (pstTask == NULL)
+		{
+			// C.S. end
+			kUnlockForSystemData(bPreviousFlag);
+			return NULL;
+		}
+	}
+	kUnlockForSystemData(bPreviousFlag);
 
 	// Calculate the stack address of the allocated TCB
 	pvStackAddress = (void*)(TASK_STACKPOOLADDRESS + (TASK_STACKSIZE * (pstTask->stLink.qwID & 0xFFFFFFFF)));
 
 	// Create a task and push it to the ready list
 	kSetUpTask(pstTask, qwFlags, qwEntryPointAddress, pvStackAddress, TASK_STACKSIZE);
-	kAddTaskToReadyList(pstTask);
+
+	bPreviousFlag = kLockForSystemData();
+	{ // C.S.
+		kAddTaskToReadyList(pstTask);
+	}
+	kUnlockForSystemData(bPreviousFlag);
 
 	return pstTask;
 }
 
-void kSetUpTask(TCB *pstTCB, QWORD qwFlags, QWORD qwEntryPointAddress, void *pvStackAddress, QWORD qwStackSize)
+static void kSetUpTask(TCB *pstTCB, QWORD qwFlags, QWORD qwEntryPointAddress, void *pvStackAddress, QWORD qwStackSize)
 {
 	kMemSet(pstTCB->stContext.vqRegister, 0, sizeof(pstTCB->stContext.vqRegister));
 
@@ -146,15 +161,30 @@ void kInitializeScheduler()
 
 void kSetRunningTask(TCB *pstTask)
 {
-	gs_stScheduler.pstRunningTask = pstTask;
+	BOOL bPreviousFlag;
+
+	bPreviousFlag = kLockForSystemData();
+	{ // C.S.
+		gs_stScheduler.pstRunningTask = pstTask;
+	}
+	kUnlockForSystemData(bPreviousFlag);
 }
 
 TCB* kGetRunningTask()
 {
-	return gs_stScheduler.pstRunningTask;
+	BOOL bPreviousFlag;
+	TCB *pstRunningTask;
+
+	bPreviousFlag = kLockForSystemData();
+	{ // C.S.
+		pstRunningTask = gs_stScheduler.pstRunningTask;
+	}
+	kUnlockForSystemData(bPreviousFlag);
+
+	return pstRunningTask;
 }
 
-TCB *kGetNextTaskToRun()
+static TCB *kGetNextTaskToRun()
 {
 	TCB *pstTarget = NULL;
 	int iTaskCount, i, j;
@@ -194,7 +224,7 @@ TCB *kGetNextTaskToRun()
 	return pstTarget;
 }
 
-BOOL kAddTaskToReadyList(TCB *pstTask)
+static BOOL kAddTaskToReadyList(TCB *pstTask)
 {
 	BYTE bPriority;
 
@@ -207,7 +237,7 @@ BOOL kAddTaskToReadyList(TCB *pstTask)
 	return TRUE;
 }
 
-TCB* kRemoveTaskFromReadyList(QWORD qwTaskID)
+static TCB* kRemoveTaskFromReadyList(QWORD qwTaskID)
 {
 	TCB *pstTarget;
 	BYTE bPriority;
@@ -227,40 +257,45 @@ TCB* kRemoveTaskFromReadyList(QWORD qwTaskID)
 BOOL kChangePriority(QWORD qwTaskID, BYTE bPriority)
 {
 	TCB *pstTarget;
+	BOOL bPreviousFlag;
 
 	if (bPriority > TASK_MAXREADYLISTCOUNT)
 		return FALSE; // Wrong priority value
 
-	pstTarget = gs_stScheduler.pstRunningTask;
-	if (pstTarget->stLink.qwID == qwTaskID)
-	{ // if qwTaskID is the ID of the current-running task
+	bPreviousFlag = kLockForSystemData();
+	{ // C.S.
+		pstTarget = gs_stScheduler.pstRunningTask;
+		if (pstTarget->stLink.qwID == qwTaskID)
+		{ // if qwTaskID is the ID of the current-running task
 
-		// Just change the priority and wait.
-		// After it uses all of the timeslice of itself,
-		//  the scheduler will add it to the appropriate priority-run-list
-		SETPRIORITY(pstTarget->qwFlags, bPriority);
-	}
-	else
-	{
-		pstTarget = kRemoveTaskFromReadyList(qwTaskID);
-		if (pstTarget == NULL)
-		{
-			// if the target does not exist in the run-lists,
-			//  find it on the TCB Pool and set the priority directly
-			pstTarget = kGetTCBInTCBPool(GETTCBOFFSET(qwTaskID));
-			// FIXME: pstTarget->stLink.qwID != qwTaskID case can be occured,
-			//			because GETTCBOFFSET(x) does not check 'x', the input param value
-			if (pstTarget != NULL)
-				SETPRIORITY(pstTarget->qwFlags, bPriority);
+			// Just change the priority and wait.
+			// After it uses all of the timeslice of itself,
+			//  the scheduler will add it to the appropriate priority-run-list
+			SETPRIORITY(pstTarget->qwFlags, bPriority);
 		}
 		else
-		{ // Found the target in the run-lists
+		{
+			pstTarget = kRemoveTaskFromReadyList(qwTaskID);
+			if (pstTarget == NULL)
+			{
+				// if the target does not exist in the run-lists,
+				//  find it on the TCB Pool and set the priority directly
+				pstTarget = kGetTCBInTCBPool(GETTCBOFFSET(qwTaskID));
+				// FIXME: pstTarget->stLink.qwID != qwTaskID case can be occured,
+				//			because GETTCBOFFSET(x) does not check 'x', the input param value
+				if (pstTarget != NULL)
+					SETPRIORITY(pstTarget->qwFlags, bPriority);
+			}
+			else
+			{ // Found the target in the run-lists
 
-			// Set the priority and add the task to the run-lists
-			SETPRIORITY(pstTarget->qwFlags, bPriority);
-			kAddTaskToReadyList(pstTarget);
+				// Set the priority and add the task to the run-lists
+				SETPRIORITY(pstTarget->qwFlags, bPriority);
+				kAddTaskToReadyList(pstTarget);
+			}
 		}
-	}
+	} // C.S. end
+	kUnlockForSystemData(bPreviousFlag);
 
 	return TRUE;
 }
@@ -275,91 +310,101 @@ void kSchedule()
 		return;
 
 	// bPreviousFlag is the IF flag of the pstRunningTask
-	bPreviousFlag = kSetInterruptFlag(FALSE);
+	bPreviousFlag = kLockForSystemData();
+	{ // C.S.
 
-	pstNextTask = kGetNextTaskToRun();
-	if (pstNextTask == NULL)
-	{
-		// Restore the interrupt flag and just return
-		kSetInterruptFlag(bPreviousFlag);
-		return;
-	}
+		pstNextTask = kGetNextTaskToRun();
+		if (pstNextTask == NULL)
+		{
+			// Restore the interrupt flag and just return
+			// C.S. end
+			kUnlockForSystemData(bPreviousFlag);
+			return;
+		}
 
-	// Change the running task(in gs_stScheduler) as a NextTask
-	pstRunningTask = gs_stScheduler.pstRunningTask;
-	gs_stScheduler.pstRunningTask = pstNextTask;
+		// Change the running task(in gs_stScheduler) as a NextTask
+		pstRunningTask = gs_stScheduler.pstRunningTask;
+		gs_stScheduler.pstRunningTask = pstNextTask;
 
-	if ((pstRunningTask->qwFlags & TASK_FLAGS_IDLE) == TASK_FLAGS_IDLE)
-	{ // If the running task is an IDLE task
+		if ((pstRunningTask->qwFlags & TASK_FLAGS_IDLE) == TASK_FLAGS_IDLE)
+		{ // If the running task is an IDLE task
 
-		// Increase the TimeInIdleTask variable to calculate CPU load
-		gs_stScheduler.qwSpendProcessorTimeInIdleTask +=
-			TASK_PROCESSORTIME - gs_stScheduler.iProcessorTime;
-	}
+			// Increase the TimeInIdleTask variable to calculate CPU load
+			gs_stScheduler.qwSpendProcessorTimeInIdleTask +=
+				TASK_PROCESSORTIME - gs_stScheduler.iProcessorTime;
+		}
 
-	// Update the processor time for the new task
-	gs_stScheduler.iProcessorTime = TASK_PROCESSORTIME;
+		// Update the processor time for the new task
+		gs_stScheduler.iProcessorTime = TASK_PROCESSORTIME;
 
-	if (pstRunningTask->qwFlags & TASK_FLAGS_ENDTASK)
-	{ // If the running task is marked as a ENDTASK
+		if (pstRunningTask->qwFlags & TASK_FLAGS_ENDTASK)
+		{ // If the running task is marked as a ENDTASK
 
-		// Put it to the wait-list and context switch, w/o saving the current context
-		kAddListToTail(&gs_stScheduler.stWaitList, pstRunningTask);
-		kSwitchContext(NULL, &(pstNextTask->stContext));
-	}
-	else
-	{
-		// Add the running task to the runnable task list and do context-switching
-		kAddTaskToReadyList(pstRunningTask);
-		kSwitchContext(&pstRunningTask->stContext, &pstNextTask->stContext);
-	}
-
-
+			// Put it to the wait-list and context switch, w/o saving the current context
+			kAddListToTail(&gs_stScheduler.stWaitList, pstRunningTask);
+			kSwitchContext(NULL, &(pstNextTask->stContext));
+		}
+		else
+		{
+			// Add the running task to the runnable task list and do context-switching
+			kAddTaskToReadyList(pstRunningTask);
+			kSwitchContext(&pstRunningTask->stContext, &pstNextTask->stContext);
+		}
+	} // C.S. end
 	// Restore the previously saved interrupt flag
 	// bPreviousFlag is the IF flag of the pstNextTask
-	kSetInterruptFlag(bPreviousFlag);
+	kUnlockForSystemData(bPreviousFlag);
 }
 
 BOOL kScheduleInInterrupt()
 {
 	TCB *pstRunningTask, *pstNextTask;
 	char *pcContextAddress;
+	BOOL bPreviousFlag;
 
-	pstNextTask = kGetNextTaskToRun();
-	if (pstNextTask == NULL)
-		return FALSE;
+	bPreviousFlag = kLockForSystemData();
+	{ // C.S.
+		pstNextTask = kGetNextTaskToRun();
+		if (pstNextTask == NULL)
+		{
+			// C.S. end
+			kUnlockForSystemData(bPreviousFlag);
+			return FALSE;
+		}
 
-	pcContextAddress = (char*)IST_STARTADDRESS + IST_SIZE - sizeof(CONTEXT);
+		pcContextAddress = (char*)IST_STARTADDRESS + IST_SIZE - sizeof(CONTEXT);
 
-	pstRunningTask = gs_stScheduler.pstRunningTask;
-	gs_stScheduler.pstRunningTask = pstNextTask;
+		pstRunningTask = gs_stScheduler.pstRunningTask;
+		gs_stScheduler.pstRunningTask = pstNextTask;
 
-	if ((pstRunningTask->qwFlags & TASK_FLAGS_IDLE) == TASK_FLAGS_IDLE)
-	{ // If the running task is an IDLE task
+		if ((pstRunningTask->qwFlags & TASK_FLAGS_IDLE) == TASK_FLAGS_IDLE)
+		{ // If the running task is an IDLE task
 
-		// Increase the TimeInIdleTask variable to calculate CPU load
-		gs_stScheduler.qwSpendProcessorTimeInIdleTask += TASK_PROCESSORTIME;
-	}
+			// Increase the TimeInIdleTask variable to calculate CPU load
+			gs_stScheduler.qwSpendProcessorTimeInIdleTask += TASK_PROCESSORTIME;
+		}
 
+		// Update the processor time for the new task
+		gs_stScheduler.iProcessorTime = TASK_PROCESSORTIME;
 
-	if (pstRunningTask->qwFlags & TASK_FLAGS_ENDTASK)
-	{ // If the running task is marked as a ENDTASK
+		if (pstRunningTask->qwFlags & TASK_FLAGS_ENDTASK)
+		{ // If the running task is marked as a ENDTASK
 
-		// Put it to the wait-list
-		kAddListToTail(&gs_stScheduler.stWaitList, pstRunningTask);
-	}
-	else
-	{
-		// Save currently running tasks' context from IST and add it to the run-list
-		kMemCpy(&pstRunningTask->stContext, pcContextAddress, sizeof(CONTEXT));
-		kAddTaskToReadyList(pstRunningTask);
-	}
+			// Put it to the wait-list
+			kAddListToTail(&gs_stScheduler.stWaitList, pstRunningTask);
+		}
+		else
+		{
+			// Save currently running tasks' context from IST and add it to the run-list
+			kMemCpy(&pstRunningTask->stContext, pcContextAddress, sizeof(CONTEXT));
+			kAddTaskToReadyList(pstRunningTask);
+		}
+	} // C.S. end
+	kUnlockForSystemData(bPreviousFlag);
 
 	// Change the saved context in the IST, to the NextTask's context
 	kMemCpy(pcContextAddress, &pstNextTask->stContext, sizeof(CONTEXT));
 
-	// Update the processor time for the new task
-	gs_stScheduler.iProcessorTime = TASK_PROCESSORTIME;
 	return TRUE;
 }
 
@@ -378,56 +423,68 @@ BOOL kEndTask(QWORD qwTaskID)
 {
 	TCB *pstTarget;
 	BYTE bPriority;
+	BOOL bPreviousFlag;
 
-	pstTarget = gs_stScheduler.pstRunningTask;
-	if (pstTarget->stLink.qwID == qwTaskID)
-	{ // If qwTaskID is running task
+	bPreviousFlag = kLockForSystemData();
+	{ // C.S.
 
-		// Set the MSB of the qwFlags (TASK_FLAGS_ENDTASK)
-		pstTarget->qwFlags |= TASK_FLAGS_ENDTASK;
+		pstTarget = gs_stScheduler.pstRunningTask;
+		if (pstTarget->stLink.qwID == qwTaskID)
+		{ // If qwTaskID is running task
 
-		// Set the priority to 0xFF (TASK_FLAGS_WAIT)
-		SETPRIORITY(pstTarget->qwFlags, TASK_FLAGS_WAIT);
+			// Set the MSB of the qwFlags (TASK_FLAGS_ENDTASK)
+			pstTarget->qwFlags |= TASK_FLAGS_ENDTASK;
 
-		// kSchedule() function will put the current task
-		//  to the wait-list (by checking the qwFlags value)
-		kSchedule();
+			// Set the priority to 0xFF (TASK_FLAGS_WAIT)
+			SETPRIORITY(pstTarget->qwFlags, TASK_FLAGS_WAIT);
 
-		// This while-loop below SHOULD NEVER BE EXECUTED
-		//  cause the current task has ended & switched
-		kPrintf("\n\n***** OOPS!! Something's worng!\n");
-		kPrintf("***** It can be happen when all the tasks have been killed");
-		while (1);
-	}
-	else
-	{
-		// If qwTaskID is not a running-task.
-		// It means that, current running task is trying to end the
-		//  other task, which has the 'qwTaskID' as it's identifier
+			// C.S. end
+			kUnlockForSystemData(bPreviousFlag);
 
-		pstTarget = kRemoveTaskFromReadyList(qwTaskID);
-		if (pstTarget == NULL)
-		{ // qwTaskID does not exists in the ready lists
+			// kSchedule() function will put the current task
+			//  to the wait-list (by checking the qwFlags value)
+			kSchedule();
 
-			pstTarget = kGetTCBInTCBPool(GETTCBOFFSET(qwTaskID));
-			if (pstTarget != NULL)
-			{
-				// FIXME: pstTarget->stLink.qwID != qwTaskID case can be occured,
-				//			because GETTCBOFFSET(x) does not check 'x', the input param value
+			// This while-loop below SHOULD NEVER BE EXECUTED
+			//  cause the current task has ended & switched
+			kPrintf("\n\n***** OOPS!! Something's worng!\n");
+			kPrintf("***** It can be happen when all the tasks have been killed");
+			while (1);
+		}
+		else
+		{
+			// If qwTaskID is not a running-task.
+			// It means that, current running task is trying to end the
+			//  other task, which has the 'qwTaskID' as it's identifier
 
-				pstTarget->qwFlags |= TASK_FLAGS_ENDTASK;
-				SETPRIORITY(pstTarget->qwFlags, TASK_FLAGS_WAIT);
+			pstTarget = kRemoveTaskFromReadyList(qwTaskID);
+			if (pstTarget == NULL)
+			{ // qwTaskID does not exists in the ready lists
+
+				pstTarget = kGetTCBInTCBPool(GETTCBOFFSET(qwTaskID));
+				if (pstTarget != NULL)
+				{
+					// FIXME: pstTarget->stLink.qwID != qwTaskID case can be occured,
+					//			because GETTCBOFFSET(x) does not check 'x', the input param value
+
+					pstTarget->qwFlags |= TASK_FLAGS_ENDTASK;
+					SETPRIORITY(pstTarget->qwFlags, TASK_FLAGS_WAIT);
+				}
+				// C.S. end
+				kUnlockForSystemData(bPreviousFlag);
+				return TRUE;
+				//return FALSE;
 			}
-			return FALSE;
+
+			// If qwTaskID exists in the ready list, then set the flag to
+			//  end-state-value, and add the task to the tail of the wait-list
+			pstTarget->qwFlags |= TASK_FLAGS_ENDTASK;
+			SETPRIORITY(pstTarget->qwFlags, TASK_FLAGS_WAIT);
+			kAddListToTail(&(gs_stScheduler.stWaitList), pstTarget);
 		}
 
-		// If qwTaskID exists in the ready list, then set the flag to
-		//  end-state-value, and add the task to the tail of the wait-list
-		pstTarget->qwFlags |= TASK_FLAGS_ENDTASK;
-		SETPRIORITY(pstTarget->qwFlags, TASK_FLAGS_WAIT);
-		kAddListToTail(&(gs_stScheduler.stWaitList), pstTarget);
-	}
-
+	} // C.S. end
+	kUnlockForSystemData(bPreviousFlag);
 	return TRUE;
 }
 
@@ -441,9 +498,15 @@ int kGetReadyTaskCount()
 {
 	int iTotalCount = 0;
 	int i;
+	BOOL bPreviousFlag;
 
-	for (i = 0; i < TASK_MAXREADYLISTCOUNT; i++)
-		iTotalCount += kGetListCount(&(gs_stScheduler.vstReadyList[i]));
+	bPreviousFlag = kLockForSystemData();
+	{ // C.S.
+
+		for (i = 0; i < TASK_MAXREADYLISTCOUNT; i++)
+			iTotalCount += kGetListCount(&(gs_stScheduler.vstReadyList[i]));
+	}
+	kUnlockForSystemData(bPreviousFlag);
 
 	return iTotalCount;
 }
@@ -451,10 +514,16 @@ int kGetReadyTaskCount()
 int kGetTaskCount()
 {
 	int iTotalCount;
+	BOOL bPreviousFlag;
 
-	// Ready task + Wait task + Running task
-	iTotalCount = kGetReadyTaskCount();
-	iTotalCount += kGetListCount(&gs_stScheduler.stWaitList) + 1;
+	bPreviousFlag = kLockForSystemData();
+	{ // C.S.
+
+		// Ready task + Wait task + Running task
+		iTotalCount = kGetReadyTaskCount();
+		iTotalCount += kGetListCount(&gs_stScheduler.stWaitList) + 1;
+	}
+	kUnlockForSystemData(bPreviousFlag);
 
 	return iTotalCount;
 }
@@ -462,7 +531,7 @@ int kGetTaskCount()
 TCB* kGetTCBInTCBPool(int iOffset)
 {
 	if (0 <= iOffset && iOffset < TASK_MAXCOUNT)
-		return &( gs_stTCBPoolManager.pstStartAddress[iOffset]);
+		return &(gs_stTCBPoolManager.pstStartAddress[iOffset]);
 
 	return NULL;
 }
@@ -491,6 +560,8 @@ void kIdleTask()
 	TCB *pstTask;
 	QWORD qwLastMeasureTickCount, qwLastSpendTickInIdleTask;
 	QWORD qwCurrentMeasureTickCount, qwCurrentSpendTickInIdleTask;
+	BOOL bPreviousFlag;
+	QWORD qwTaskID;
 
 	qwLastMeasureTickCount = kGetTickCount();
 	qwLastSpendTickInIdleTask = gs_stScheduler.qwSpendProcessorTimeInIdleTask;
@@ -528,12 +599,22 @@ void kIdleTask()
 		{
 			while (1)
 			{
-				pstTask = kRemoveListFromHeader(&gs_stScheduler.stWaitList);
-				if (pstTask == NULL)
-					break;
+				bPreviousFlag = kLockForSystemData();
+				{ // C.S.
 
-				kPrintf("IDLE: Task ID[0x%q] is completely ended.\n", pstTask->stLink.qwID);
-				kFreeTCB(pstTask->stLink.qwID);
+					pstTask = kRemoveListFromHeader(&gs_stScheduler.stWaitList);
+					if (pstTask == NULL)
+					{ // C.S. end
+						kUnlockForSystemData(bPreviousFlag);
+						break;
+					}
+
+					qwTaskID = pstTask->stLink.qwID;
+					kFreeTCB(qwTaskID);
+				}
+				kUnlockForSystemData(bPreviousFlag);
+
+				kPrintf("IDLE: Task ID[0x%q] is completely ended.\n", qwTaskID);
 			}
 		}
 
