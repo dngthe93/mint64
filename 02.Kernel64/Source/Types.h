@@ -11,6 +11,8 @@
 #define FALSE	0
 #define NULL	0
 
+#define offsetof(TYPE, MEMBER) _ _builtin_offsetof (TYPE, MEMBER)
+
 
 #pragma pack(push, 1)
 

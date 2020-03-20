@@ -55,6 +55,9 @@
 // Maximum number of lists
 #define TASK_MAXREADYLISTCOUNT	5
 
+
+// Task Flags
+
 // Priority val of the tasks
 #define TASK_FLAGS_HIGHEST		0
 #define TASK_FLAGS_HIGH			1
@@ -64,11 +67,16 @@
 #define TASK_FLAGS_WAIT			0xFF
 
 #define TASK_FLAGS_ENDTASK		0x8000000000000000
+#define TASK_FLAGS_SYSTEM		0x4000000000000000
+#define TASK_FLAGS_PROCESS		0x2000000000000000
+#define TASK_FLAGS_THREAD		0x1000000000000000
 #define TASK_FLAGS_IDLE			0x0800000000000000
 
 #define GETPRIORITY(x)			((x) & 0xFF)
 #define SETPRIORITY(x, prior)	((x) = ((x) & 0xFFFFFFFFFFFFFF00) | (prior))
 #define GETTCBOFFSET(x)			((x) & 0xFFFFFFFF)
+
+#define GETTCBFROMTHREADLINK(x)	(TCB*)((QWORD)(x) - offsetof(TCB, stThreadLink))
 
 
 #pragma pack(push, 1)
@@ -82,9 +90,22 @@ typedef struct kTaskControlBlockStruct
 	// Link structure including qwID
 	LISTLINK stLink;
 
-	CONTEXT stContext;
-
 	QWORD qwFlags;
+
+	void *pvMemoryAddress;
+	QWORD qwMemorySize;
+
+	//////////////////////////////////////
+	// Member variables for the Thread
+	//////////////////////////////////////
+	LISTLINK stThreadLink;
+
+	// List of the child threads
+	LIST stChildThreadList;
+
+	QWORD qwParentProcessID;
+
+	CONTEXT stContext;
 
 	void *pvStackAddress;
 	QWORD qwStackSize;
@@ -118,6 +139,8 @@ typedef struct kSchedulerStruct
 	// Vars to calculate CPU load
 	QWORD qwProcessorLoad;
 	QWORD qwSpendProcessorTimeInIdleTask;
+
+	QWORD qwTaskSwitchCount;
 } SCHEDULER;
 #pragma pop
 
@@ -128,7 +151,7 @@ typedef struct kSchedulerStruct
 static void kInitializeTCBPool();
 static TCB* kAllocateTCB();
 static void kFreeTCB(QWORD qwID);
-TCB* kCreateTask(QWORD qwFlags, QWORD qwEntryPointAddress);
+TCB* kCreateTask(QWORD qwFlags, void *pvMemoryAddress, QWORD qwMemorySize, QWORD qwEntryPointAddress);
 static void kSetUpTask(TCB *pstTCB, QWORD qwFlags, QWORD qwEntryPointAddress, void *pvStackAddress, QWORD qwStackSize);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -152,6 +175,7 @@ int kGetTaskCount();
 TCB* kGetTCBInTCBPool(int iOffset);
 BOOL kIsTaskExist(QWORD qwID);
 QWORD kGetProcessorLoad();
+static TCB *kGetProcessByThread(TCB *pstThread);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Idle Tasks

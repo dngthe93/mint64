@@ -329,3 +329,14 @@ QWORD kGetTickCount()
 {
 	return g_qwTickCount;
 }
+
+void kSleep(QWORD qwMillisecond)
+{
+	QWORD qwLastTickCount;
+
+	qwLastTickCount = kGetTickCount();
+
+	// TickCount increases for every 1ms (PIT interrupt)
+	while ((kGetTickCount() - qwLastTickCount) <= qwMillisecond)
+		kSchedule();
+}

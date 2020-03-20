@@ -73,8 +73,8 @@ void Main()
 	kSetCursor(61, iCursorY++);
 	kPrintf("Pass\n");
 
-	// Create an idle task
-	kCreateTask(TASK_FLAGS_LOWEST | TASK_FLAGS_IDLE, (QWORD)kIdleTask);
+	// Create an idle task as a system thread
+	kCreateTask(TASK_FLAGS_LOWEST | TASK_FLAGS_THREAD | TASK_FLAGS_SYSTEM | TASK_FLAGS_IDLE, 0, 0, (QWORD)kIdleTask);
 
 	// Start the Console Shell
 	kStartConsoleShell();
