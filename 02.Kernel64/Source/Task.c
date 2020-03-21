@@ -129,6 +129,8 @@ TCB* kCreateTask(QWORD qwFlags, void *pvMemoryAddress, QWORD qwMemorySize, QWORD
 
 	kInitializeList(&pstTask->stChildThreadList);
 
+	pstTask->bFPUUsed = FALSE;
+
 	bPreviousFlag = kLockForSystemData();
 	{ // C.S.
 		kAddTaskToReadyList(pstTask);
@@ -203,8 +205,12 @@ void kInitializeScheduler()
 	pstTask->pvStackAddress = (void*)0x600000;
 	pstTask->qwStackSize = 0x100000;
 
-	gs_stScheduler.qwTaskSwitchCount = 0;
+	gs_stScheduler.qwLastFPUUsedTaskID = TASK_INVALIDID;
+
 	gs_stScheduler.qwProcessorLoad = 0;
+	gs_stScheduler.qwSpendProcessorTimeInIdleTask = 0;
+
+	gs_stScheduler.qwTaskSwitchCount = 0;
 }
 
 void kSetRunningTask(TCB *pstTask)
@@ -382,6 +388,13 @@ void kSchedule()
 				TASK_PROCESSORTIME - gs_stScheduler.iProcessorTime;
 		}
 
+		// If Last-FPU-used-Task is NextTask, TS must be zero, because
+		//  FPU context saving procedure is not need
+		if (gs_stScheduler.qwLastFPUUsedTaskID != pstNextTask->stLink.qwID)
+			kSetTS();
+		else
+			kClearTS();
+
 		// Update the processor time for the new task
 		gs_stScheduler.iProcessorTime = TASK_PROCESSORTIME;
 
@@ -449,6 +462,12 @@ BOOL kScheduleInInterrupt()
 		}
 	} // C.S. end
 	kUnlockForSystemData(bPreviousFlag);
+
+	// FIXME: Lock needed?
+	if (gs_stScheduler.qwLastFPUUsedTaskID != pstNextTask->stLink.qwID)
+		kSetTS();
+	else
+		kClearTS();
 
 	// Change the saved context in the IST, to the NextTask's context
 	kMemCpy(pcContextAddress, &pstNextTask->stContext, sizeof(CONTEXT));
@@ -756,4 +775,19 @@ void kHaltProcessorByLoad()
 	{
 		kHlt();
 	}
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+// FPU
+////////////////////////////////////////////////////////////////////////////////
+
+QWORD kGetLastFPUUsedTaskID()
+{
+	return gs_stScheduler.qwLastFPUUsedTaskID;
+}
+void kSetLastFPUUsedTaskID(QWORD qwTaskID)
+{
+	// FIXME: Lock needed?
+	gs_stScheduler.qwLastFPUUsedTaskID = qwTaskID;
 }

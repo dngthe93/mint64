@@ -6,6 +6,7 @@ global kInPortByte, kOutPortByte, kLoadGDTR, kLoadTR, kLoadIDTR
 global kEnableInterrupt, kDisableInterrupt, kReadRFLAGS
 global kReadTSC
 global kSwitchContext, kHlt, kTestAndSet
+global kInitializeFPU, kSaveFPUContext, kLoadFPUContext, kSetTS, kClearTS
 
 
 
@@ -251,4 +252,50 @@ ret
 
 .SUCCESS:
 mov rax, 0x01
+ret
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; void kInitializeFPU()
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+kInitializeFPU:
+finit
+ret
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; void kSaveFPUContext(void *pvFPUContext)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+kSaveFPUContext:
+fxsave [rdi]
+ret
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; void kLoadFPUContext(void *pvFPUContext)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+kLoadFPUContext:
+fxrstor [rdi]
+ret
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; void kSetTS()
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+kSetTS:
+push rax
+
+mov rax, cr0
+or rax, 0x08
+mov cr0, rax
+
+pop rax
+ret
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; void kClearTS()
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+kClearTS:
+clts
 ret

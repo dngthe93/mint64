@@ -5,6 +5,7 @@
 #include "Console.h"
 #include "Task.h"
 #include "Utility.h"
+#include "AssemblyUtility.h"
 
 
 void kCommonExceptionHandler(int iVectorNumber, QWORD qwErrorCode)
@@ -66,8 +67,6 @@ void kKeyboardHandler(int iVectorNumber)
 	kSendEOIToPIC(iVectorNumber - PIC_IRQSTARTVECTOR);
 }
 
-#include "Task.h"
-extern SCHEDULER gs_stScheduler;
 void kTimerHandler(int iVectorNumber)
 {
 	char vcBuffer[] = "[INT:  , ]";
@@ -89,4 +88,48 @@ void kTimerHandler(int iVectorNumber)
 	kDecreaseProcessorTime();
 	if (kIsProcessorTimeExpired())
 		kScheduleInInterrupt();
+}
+
+void kDeviceNotAvailableHandler(int iVectorNumber)
+{
+	TCB *pstLastFPUTask, *pstCurrentTask;
+	QWORD qwLastFPUTaskID;
+
+	{
+		char vcBuffer[] = "[EXC:  , ]";
+		static int g_iFPUInterruptCount = 0;
+
+		vcBuffer[5] = '0' + iVectorNumber / 10;
+		vcBuffer[6] = '0' + iVectorNumber % 10;
+		vcBuffer[8] = '0' + g_iFPUInterruptCount;
+		g_iFPUInterruptCount = (g_iFPUInterruptCount + 1) % 10;
+		kPrintStringXY(0, 0, vcBuffer);
+	}
+
+	kClearTS();
+
+	qwLastFPUTaskID = kGetLastFPUUsedTaskID();
+	pstCurrentTask = kGetRunningTask();
+
+	if (qwLastFPUTaskID == pstCurrentTask->stLink.qwID)
+		return; // noting to do here
+
+	// Save the context
+	if (qwLastFPUTaskID != TASK_INVALIDID)
+	{
+		pstLastFPUTask = kGetTCBInTCBPool(GETTCBOFFSET(qwLastFPUTaskID));
+		if (pstLastFPUTask && pstLastFPUTask->stLink.qwID == qwLastFPUTaskID)
+			kSaveFPUContext(pstLastFPUTask->vqwFPUContext);
+	}
+
+	// Restore the context
+	if (pstCurrentTask->bFPUUsed)
+		kLoadFPUContext(pstCurrentTask->vqwFPUContext);
+	else
+	{
+		kInitializeFPU();
+		pstCurrentTask->bFPUUsed = TRUE;
+	}
+
+	kSetLastFPUUsedTaskID(pstCurrentTask->stLink.qwID);
 }
