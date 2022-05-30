@@ -8,6 +8,7 @@
 #include "ConsoleShell.h"
 #include "Utility.h"
 #include "PIT.h"
+#include "DynamicMemory.h"
 
 
 void Main()
@@ -51,6 +52,12 @@ void Main()
 	iCursorY++;
 	kInitializeScheduler();
 	kInitializePIT(MSTOCOUNT(1), 1);
+
+
+	kPrintf("Dynamic Memory Initialize...................................[Pass]\n");
+	iCursorY++;
+	kInitializeDynamicMemory();
+
 
 	kPrintf("Keyboard Activate And Queue Initialize......................[    ]");
 	if (kInitializeKeyboard())

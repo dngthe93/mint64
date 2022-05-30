@@ -8,6 +8,7 @@
 #include "AssemblyUtility.h"
 #include "Task.h"
 #include "Synchronization.h"
+#include "DynamicMemory.h"
 
 // Command table definition
 SHELLCOMMANDENTRY gs_vstCommandTable[] =
@@ -30,7 +31,10 @@ SHELLCOMMANDENTRY gs_vstCommandTable[] =
 	{"testmutex", "Test Mutex Function", kTestMutex},
 	{"testthread", "Test Thread And Process Function", kTestThread},
 	{"showmatrix", "Show Matrix Screen", kShowMatrix},
-	{"testpie", "Test PIE Calculation", kTestPIE}
+	{"testpie", "Test PIE Calculation", kTestPIE},
+	{"dynamicmeminfo", "Show Dynamic Memory Information", kShowDynamicMemoryInformation},
+	{"testseqalloc", "Test Sequential Allocation & Free", kTestSequentialAllocation},
+	{"testranalloc", "Test Random Allocation & Free", kTestRandomAllocation}
 };
 
 
@@ -178,6 +182,17 @@ static void kHelp(const char *pcParameterBuffer)
 		kGetCursor(&iCursorX, &iCursorY);
 		kSetCursor(iMaxCommandLength, iCursorY);
 		kPrintf(" - %s\n", gs_vstCommandTable[i].pcHelp);
+
+		if (i != 0 && (i % 20) == 0)
+		{
+			kPrintf("Press any key to continue... ('q' is exit): ");
+			if (kGetCh() == 'q')
+			{
+				kPrintf("\n");
+				break;
+			}
+			kPrintf("\n");
+		}
 	}
 }
 
@@ -791,4 +806,82 @@ static void kTestPIE(const char *pcParameterBuffer)
 
 	for (i = 0; i < 100; i++)
 		kCreateTask(TASK_FLAGS_LOW | TASK_FLAGS_THREAD, 0, 0, (QWORD)kFPUTestTask);
+}
+
+static void kShowDynamicMemoryInformation(const char *pcParameterBuffer)
+{
+	QWORD qwStartAddress, qwTotalSize, qwMetaSize, qwUsedSize;
+
+	kGetDynamicMemoryInformation(&qwStartAddress, &qwTotalSize, &qwMetaSize, &qwUsedSize);
+
+	kPrintf("============ Dynamic Memory Information ============\n");
+	kPrintf("Start Address: [0xQ]\n", qwStartAddress);
+	kPrintf("Total Size: [0xQ]byte, [%d]MB\n", qwTotalSize, qwTotalSize / 1024 / 1024);
+	kPrintf("Meta Size: [0xQ]byte, [%d]KB\n", qwMetaSize, qwMetaSize / 1024);
+	kPrintf("Used Size: [0xQ]byte, [%d]KB\n", qwUsedSize, qwUsedSize / 1024);
+}
+
+static void kTestSequentialAllocation(const char *pcParameterBuffer)
+{
+	DYNAMICMEMORY *pstMemory;
+	long i, j, k;
+	QWORD *pqwBuffer;
+
+	kPrintf("============ Dynamic Memory Test ============\n");
+	pstMemory = kGetDynamicMemoryManager();
+
+	for (i = 0; i < pstMemory->iMaxLevelCount; i++)
+	{
+		kPrintf("Block List [%d] Test Start\n", i);
+		kPrintf("Allocation And Compare: ");
+
+		for (j = 0; j < (pstMemory->iBlockCountOfSmallestBlock >> i); j++)
+		{
+			pqwBuffer = kAllocateMemory(DYNAMICMEMORY_MIN_SIZE << i);
+			if (pqwBuffer == NULL)
+			{
+				kPrintf("\nAllocation Fail\n");
+				return;
+			}
+
+			for (k = 0; k < (DYNAMICMEMORY_MIN_SIZE << i) / 8; k++)
+				pqwBuffer[k] = k;
+
+			for (k = 0; k < (DYNAMICMEMORY_MIN_SIZE << i) / 8; k++)
+			{
+				if (pqwBuffer[k] != k)
+				{
+					kPrintf("\nCompare Fail\n");
+					return;
+				}
+			}
+
+			kPrintf(".");
+		}
+
+		kPrintf("\nFree: ");
+
+		for (j = 0; j < (pstMemory->iBlockCountOfSmallestBlock >> i); j++)
+		{
+			if (!kFreeMemory((void*)(pstMemory->qwStartAddress + (DYNAMICMEMORY_MIN_SIZE << i) * j)))
+			{
+				kPrintf("\nFree Fail\n");
+				return;
+			}
+
+			kPrintf(".");
+		}
+	}
+
+	kPrintf("Test Complete~!!!\n");
+}
+
+static void kRandomAllocationTask()
+{
+	...
+}
+
+static void kTestRandomAllocation(const char *pcParameterBuffer)
+{
+	...
 }
